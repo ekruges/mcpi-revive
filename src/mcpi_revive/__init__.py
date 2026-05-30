@@ -1,4 +1,3 @@
-"""mcpi-revive: convert Minecraft: Pi Edition worlds to modern Java Anvil format."""
 from .convert import convert
 from .parser import parse_chunks_dat
 
