@@ -1,13 +1,19 @@
-"""Build a 'void overworld' WorldGenSettings so the converted world doesn't
-have modern terrain bleeding in around the MCPI footprint.
+"""Void overworld WorldGenSettings.
 
-Layout follows the vanilla `flat` world preset with biome = `the_void` and
-empty layers. Nether and End use their standard noise generators (the player
-can't see them from a void overworld anyway).
+Modern MC (~26.1+) keeps WGS in `data/minecraft/world_gen_settings.dat`.
+That file's root layout is:
 
-Modern MC (~26.1+) keeps this in `data/minecraft/world_gen_settings.dat`;
-older versions keep it inline at `level.dat`'s `Data.WorldGenSettings`. We
-write both for safety.
+    Root TAG_Compound (unnamed)
+      data         TAG_Compound — children seed / bonus_chest /
+                                   generate_structures / dimensions
+      DataVersion  TAG_Int
+
+The inline `level.dat:Data.WorldGenSettings` field has been removed from the
+modern level.dat schema, so we don't bother patching it.
+
+The flat-world generator with biome `minecraft:the_void` and empty layers is
+the canonical "no terrain" config; the player can't see Nether or End from a
+void overworld so we leave those at their defaults.
 """
 from __future__ import annotations
 
@@ -22,6 +28,10 @@ def _str(name: str, value: str) -> nbt.TAG_String:
 
 def _byte(name: str, value: int) -> nbt.TAG_Byte:
     t = nbt.TAG_Byte(value=value); t.name = name; return t
+
+
+def _int(name: str, value: int) -> nbt.TAG_Int:
+    t = nbt.TAG_Int(value=value); t.name = name; return t
 
 
 def _long(name: str, value: int) -> nbt.TAG_Long:
@@ -40,23 +50,20 @@ def _flat_overworld_settings() -> nbt.TAG_Compound:
     settings.tags.append(_str("biome", "minecraft:the_void"))
     settings.tags.append(_byte("features", 0))
     settings.tags.append(_byte("lakes", 0))
-    layers = nbt.TAG_List(name="layers", type=nbt.TAG_Compound)
-    settings.tags.append(layers)
-    structure_overrides = nbt.TAG_List(name="structure_overrides", type=nbt.TAG_String)
-    settings.tags.append(structure_overrides)
+    settings.tags.append(nbt.TAG_List(name="layers", type=nbt.TAG_Compound))
+    settings.tags.append(nbt.TAG_List(name="structure_overrides", type=nbt.TAG_String))
     return settings
 
 
-def build_world_gen_settings(seed: int = 0) -> nbt.TAG_Compound:
-    """Build the WorldGenSettings compound (named ``WorldGenSettings``)."""
-    wgs = nbt.TAG_Compound(); wgs.name = "WorldGenSettings"
-    wgs.tags.append(_long("seed", seed))
-    wgs.tags.append(_byte("generate_features", 0))
-    wgs.tags.append(_byte("bonus_chest", 0))
+def build_wgs_inner(seed: int = 0) -> list:
+    """Children of the `data` compound in world_gen_settings.dat."""
+    children = []
+    children.append(_long("seed", seed))
+    children.append(_byte("bonus_chest", 0))
+    children.append(_byte("generate_structures", 0))
 
     dimensions = nbt.TAG_Compound(); dimensions.name = "dimensions"
-
-    overworld = _compound(
+    dimensions.tags.append(_compound(
         "minecraft:overworld",
         _str("type", "minecraft:overworld"),
         _compound(
@@ -64,8 +71,8 @@ def build_world_gen_settings(seed: int = 0) -> nbt.TAG_Compound:
             _str("type", "minecraft:flat"),
             _flat_overworld_settings(),
         ),
-    )
-    nether = _compound(
+    ))
+    dimensions.tags.append(_compound(
         "minecraft:the_nether",
         _str("type", "minecraft:the_nether"),
         _compound(
@@ -78,8 +85,8 @@ def build_world_gen_settings(seed: int = 0) -> nbt.TAG_Compound:
             ),
             _str("settings", "minecraft:nether"),
         ),
-    )
-    end = _compound(
+    ))
+    dimensions.tags.append(_compound(
         "minecraft:the_end",
         _str("type", "minecraft:the_end"),
         _compound(
@@ -88,30 +95,35 @@ def build_world_gen_settings(seed: int = 0) -> nbt.TAG_Compound:
             _compound("biome_source", _str("type", "minecraft:the_end")),
             _str("settings", "minecraft:end"),
         ),
-    )
-    dimensions.tags.extend([overworld, nether, end])
-    wgs.tags.append(dimensions)
-    return wgs
+    ))
+    children.append(dimensions)
+    return children
 
 
-def install_void_worldgen(world_dir: Path, seed: int = 0) -> None:
-    """Replace `level.dat`'s WorldGenSettings AND write a standalone
-    `data/minecraft/world_gen_settings.dat`."""
+def install_void_worldgen(world_dir: Path, seed: int = 0, data_version: int = 4790) -> None:
+    """Write `data/minecraft/world_gen_settings.dat` with a void overworld."""
     world_dir = Path(world_dir)
 
-    # 1. Patch level.dat in place
+    # Strip any stale WorldGenSettings from level.dat (modern MC doesn't read it
+    # from there, and leftover wrong-shape data confuses serializers in some
+    # tools).
     level_path = world_dir / "level.dat"
-    f = nbt.NBTFile(str(level_path))
-    data = f["Data"]
-    data.tags = [t for t in data.tags if t.name != "WorldGenSettings"]
-    data.tags.append(build_world_gen_settings(seed))
-    f.write_file(str(level_path))
+    if level_path.exists():
+        f = nbt.NBTFile(str(level_path))
+        try:
+            data = f["Data"]
+            data.tags = [t for t in data.tags if t.name != "WorldGenSettings"]
+            f.write_file(str(level_path))
+        except KeyError:
+            pass
 
-    # 2. Standalone file for 26.1+. Root compound IS the WGS — children
-    #    seed/generate_features/bonus_chest/dimensions go in directly.
     wgs_dir = world_dir / "data" / "minecraft"
     wgs_dir.mkdir(parents=True, exist_ok=True)
-    standalone = nbt.NBTFile()
-    for child in build_world_gen_settings(seed).tags:
-        standalone.tags.append(child)
-    standalone.write_file(str(wgs_dir / "world_gen_settings.dat"))
+
+    root = nbt.NBTFile()
+    data_wrapper = nbt.TAG_Compound(); data_wrapper.name = "data"
+    for child in build_wgs_inner(seed):
+        data_wrapper.tags.append(child)
+    root.tags.append(data_wrapper)
+    root.tags.append(_int("DataVersion", data_version))
+    root.write_file(str(wgs_dir / "world_gen_settings.dat"))

@@ -195,7 +195,7 @@ def convert(
     if void_surroundings:
         log.info("installing void world generator")
         seed = mcpi_meta.get("RandomSeed") or 0
-        install_void_worldgen(out_dir, seed=int(seed))
+        install_void_worldgen(out_dir, seed=int(seed), data_version=data_version)
 
     (out_dir / "session.lock").write_bytes(b"\xe2\x98\x83")
 
