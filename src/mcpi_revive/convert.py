@@ -136,6 +136,76 @@ def _stitch_doors(states: np.ndarray) -> None:
                 })
 
 
+def _stitch_beds(states: np.ndarray, blocks: np.ndarray) -> None:
+    """Pair up bed halves and derive `facing` from their actual relative
+    positions instead of trusting MCPI's data nibble.
+
+    Modern Java beds need both halves to share `facing` (the direction from
+    foot to head), and the matching head/foot must be in the adjacent block
+    in that direction. MCPI's per-half facing nibbles don't always match
+    modern Java's convention, which makes beds render as ghost halves.
+
+    Orphan halves (no matching partner within 1 block) get replaced with
+    air rather than left as ghost blocks.
+    """
+    bed_positions = np.argwhere(blocks == 26)
+    bed_set = {tuple(p.tolist()) for p in bed_positions}
+    if not bed_set:
+        return
+
+    dirs = (
+        ("north", 0, 0, -1),
+        ("south", 0, 0, 1),
+        ("west", -1, 0, 0),
+        ("east", 1, 0, 0),
+    )
+
+    processed: set = set()
+    for pos_arr in bed_positions:
+        pos = tuple(pos_arr.tolist())
+        if pos in processed:
+            continue
+        state = states[pos]
+        if not isinstance(state, tuple) or state[0] != "red_bed":
+            continue
+        part = state[1].get("part", "foot")
+
+        partner = None
+        for _, dx, dy, dz in dirs:
+            n = (pos[0] + dx, pos[1] + dy, pos[2] + dz)
+            if n in bed_set and n not in processed:
+                ns = states[n]
+                if isinstance(ns, tuple) and ns[0] == "red_bed":
+                    if ns[1].get("part", "foot") != part:
+                        partner = n
+                        break
+
+        if partner is None:
+            # Orphan bed half — remove rather than leave as a ghost.
+            states[pos] = ("air", {})
+            processed.add(pos)
+            continue
+
+        foot, head = (pos, partner) if part == "foot" else (partner, pos)
+        ddx, ddz = head[0] - foot[0], head[2] - foot[2]
+        if ddx == 1:
+            facing = "east"
+        elif ddx == -1:
+            facing = "west"
+        elif ddz == 1:
+            facing = "south"
+        elif ddz == -1:
+            facing = "north"
+        else:
+            facing = "north"  # foot and head somehow at same column
+
+        common = {"facing": facing, "occupied": "false"}
+        states[foot] = ("red_bed", {"part": "foot", **common})
+        states[head] = ("red_bed", {"part": "head", **common})
+        processed.add(pos)
+        processed.add(partner)
+
+
 def _stitch_connections(states: np.ndarray, blocks: np.ndarray) -> None:
     """Set north/south/east/west on fences, glass panes, iron bars.
 
@@ -264,6 +334,7 @@ def convert(
     log.info("decoding block states")
     states = _decode_states(blocks, metadata)
     _stitch_doors(states)
+    _stitch_beds(states, blocks)
     _stitch_connections(states, blocks)
     highest = _compute_highest_solid(blocks)
 
