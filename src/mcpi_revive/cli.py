@@ -56,7 +56,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--name", help="LevelName")
     p.add_argument("--install-to-saves", action="store_true",
                    help="also copy result into your MC saves")
-    p.add_argument("--spawn", default="128,70,128", help="X,Y,Z")
+    p.add_argument("--spawn", help="X,Y,Z (default: read from MCPI level.dat)")
+    p.add_argument("--no-void", action="store_true",
+                   help="Skip void world generator (leave default modern terrain outside).")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args(argv)
 
@@ -79,12 +81,14 @@ def main(argv: Optional[list[str]] = None) -> int:
             p.error("no template found; pass --template")
         logging.info("template: %s", template)
 
-    try:
-        spawn = tuple(int(x) for x in args.spawn.split(","))
-        if len(spawn) != 3:
-            raise ValueError
-    except ValueError:
-        p.error("--spawn must be X,Y,Z ints")
+    spawn = None
+    if args.spawn:
+        try:
+            spawn = tuple(int(x) for x in args.spawn.split(","))
+            if len(spawn) != 3:
+                raise ValueError
+        except ValueError:
+            p.error("--spawn must be X,Y,Z ints")
 
     worlds = list(_iter_worlds(src))
     if not worlds:
@@ -95,9 +99,15 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     for world in worlds:
         out = dest if single else dest / world.name
-        name = args.name if (single and args.name) else (args.name or world.name)
+        name = args.name if args.name else world.name
         logging.info("converting %s -> %s", world.name, out)
-        convert(world, out, level_name=name, template_world=template, spawn=spawn)
+        convert(
+            world, out,
+            level_name=args.name if args.name else None,
+            template_world=template,
+            spawn=spawn,
+            void_surroundings=not args.no_void,
+        )
 
         if args.install_to_saves:
             mc = _default_minecraft_dir()

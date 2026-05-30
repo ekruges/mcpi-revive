@@ -16,20 +16,25 @@ Launch Minecraft, your old world is in the list.
 
 ## What works
 
-- All terrain blocks, from bedrock to anything you built above sea level (MCPI stores up to y=127)
+- All terrain blocks, including builds above MCPI's gameplay ceiling (y=64..127)
 - 45 vanilla block types
+- Block state from the data nibble: wool color, slab variant, stair facing, log axis, door state, trapdoor, ladder, chest/furnace facing, quartz pillar axis, water/lava level
+- MCPI bedrock lands at modern y=-64 (matches the modern world floor)
+- World spawn pulled from MCPI's `level.dat`
+- Everything outside the 256×256 MCPI footprint is **void** — no modern terrain bleeding in
 
 ## What doesn't (yet)
 
-- Wool color / slab type / stair direction (in MCPI's data nibble, dropped)
-- Chest contents, sign text, mobs (in `entities.dat`, not parsed)
-
-Unknown block IDs come out as magenta wool — easy to spot.
+- Chest contents, sign text (in MCPI's chunk tile-entity records / `entities.dat`, not parsed)
+- Mobs and dropped items
+- Player inventory
+- A few obscure PE-exclusive blocks come out as magenta wool — easy to spot and re-map
 
 ## CLI
 
 ```
-mcpi-revive <source> <output> [--name NAME] [--template PATH] [--install-to-saves] [--spawn X,Y,Z]
+mcpi-revive <source> <output> [--name NAME] [--template PATH]
+                              [--install-to-saves] [--spawn X,Y,Z] [--no-void]
 ```
 
 `<source>` is either a single MCPI world folder or a parent containing several (e.g. `com.mojang/minecraftWorlds`).

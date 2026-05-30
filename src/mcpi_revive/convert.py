@@ -5,7 +5,7 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 from nbt import nbt
@@ -17,28 +17,58 @@ from .anvil import (
     write_empty_region,
     write_region,
 )
-from .blocks import mcpi_to_java_name
-from .parser import INTERNAL_HEIGHT, WORLD_CHUNKS_X, WORLD_CHUNKS_Z, parse_chunks_dat
+from .blocks import mcpi_to_java_state
+from .parser import (
+    INTERNAL_HEIGHT,
+    WORLD_CHUNKS_X,
+    WORLD_CHUNKS_Z,
+    parse_blocks_and_data,
+    parse_level_dat,
+)
+from .worldgen import install_void_worldgen
 
 log = logging.getLogger(__name__)
 
 MIN_SECTION_Y = -4
 MAX_SECTION_Y = 19
-MIN_WORLD_Y = MIN_SECTION_Y * 16
+MIN_WORLD_Y = MIN_SECTION_Y * 16  # -64
+
+# Shift the MCPI world down so MCPI y=0 lands at modern y=Y_SHIFT.
+# -64 puts MCPI bedrock at modern bedrock level (the world's floor).
+Y_SHIFT = -64
 
 
-def _block_id_lookup(world_blocks: np.ndarray) -> np.ndarray:
-    lut = np.array([mcpi_to_java_name(i) for i in range(256)], dtype=object)
-    return lut[world_blocks]
+def _decode_states(blocks: np.ndarray, data: np.ndarray) -> np.ndarray:
+    """Return a (X, Y, Z) object array of (name, properties) tuples.
+
+    Each unique (id, data) pair is decoded once and cached.
+    """
+    cache: Dict[Tuple[int, int], Tuple[str, Dict[str, str]]] = {}
+    flat_blocks = blocks.reshape(-1)
+    flat_data = data.reshape(-1)
+    out = np.empty(flat_blocks.shape, dtype=object)
+    for i, (b, d) in enumerate(zip(flat_blocks, flat_data)):
+        # Air shortcut — far and away the most common
+        if b == 0:
+            out[i] = ("air", {})
+            continue
+        key = (int(b), int(d))
+        st = cache.get(key)
+        if st is None:
+            st = mcpi_to_java_state(b, d)
+            cache[key] = st
+        out[i] = st
+    return out.reshape(blocks.shape)
 
 
-def _compute_highest_solid(world_blocks: np.ndarray) -> np.ndarray:
-    nonair = world_blocks != 0  # (X, Y, Z)
+def _compute_highest_solid(blocks: np.ndarray) -> np.ndarray:
+    nonair = blocks != 0
     flipped = nonair[:, ::-1, :]
     any_y = flipped.any(axis=1)
     first_top = flipped.argmax(axis=1)
-    top_y = (INTERNAL_HEIGHT - 1) - first_top
-    return np.where(any_y, top_y, -1)
+    top_mcpi_y = (INTERNAL_HEIGHT - 1) - first_top
+    top_world_y = top_mcpi_y + Y_SHIFT
+    return np.where(any_y, top_world_y, MIN_WORLD_Y - 1)
 
 
 def _scaffold_from_template(template: Path, dest: Path) -> None:
@@ -56,7 +86,7 @@ def _scaffold_from_template(template: Path, dest: Path) -> None:
                 f.unlink()
 
 
-def _patch_level_dat(path: Path, level_name: str, spawn: tuple[int, int, int]) -> None:
+def _patch_level_dat(path: Path, level_name: str, spawn: Tuple[int, int, int]) -> None:
     f = nbt.NBTFile(str(path))
     data = f["Data"]
     names = {t.name for t in data.tags}
@@ -87,10 +117,11 @@ def convert(
     mcpi_world_dir: os.PathLike,
     out_dir: os.PathLike,
     *,
-    level_name: str = "MCPI Recovered",
+    level_name: Optional[str] = None,
     template_world: Optional[os.PathLike] = None,
-    spawn: tuple[int, int, int] = (128, 70, 128),
+    spawn: Optional[Tuple[int, int, int]] = None,
     data_version: int = DATA_VERSION_DEFAULT,
+    void_surroundings: bool = True,
 ) -> Path:
     if template_world is None:
         raise ValueError("template_world is required — pass a fresh Java save dir")
@@ -98,32 +129,51 @@ def convert(
     mcpi_world_dir = Path(mcpi_world_dir)
     out_dir = Path(out_dir)
 
+    log.info("reading MCPI level.dat")
+    mcpi_meta = parse_level_dat(mcpi_world_dir)
+    if level_name is None:
+        level_name = mcpi_meta.get("LevelName") or mcpi_world_dir.name
+    if spawn is None:
+        mcpi_spawn = mcpi_meta.get("Spawn")
+        if mcpi_spawn:
+            sx, sy, sz = mcpi_spawn
+            spawn = (sx, sy + Y_SHIFT + 2, sz)
+        else:
+            spawn = (128, MIN_WORLD_Y + 70, 128)
+
     log.info("cloning template")
     if out_dir.exists():
         shutil.rmtree(out_dir)
     _scaffold_from_template(Path(template_world), out_dir)
 
     log.info("parsing chunks.dat")
-    world_blocks = parse_chunks_dat(mcpi_world_dir)
-    java_names = _block_id_lookup(world_blocks)
-    highest = _compute_highest_solid(world_blocks)
+    blocks, metadata = parse_blocks_and_data(mcpi_world_dir)
+
+    log.info("decoding block states")
+    states = _decode_states(blocks, metadata)
+    highest = _compute_highest_solid(blocks)
 
     log.info("building chunks")
-    chunks: dict[tuple[int, int], nbt.NBTFile] = {}
+    chunks: Dict[Tuple[int, int], nbt.NBTFile] = {}
+    air_state = ("air", {})
+    empty_section = np.empty((16, 16, 16), dtype=object)
+    empty_section[:] = [[[air_state] * 16] * 16] * 16
     for cx in range(WORLD_CHUNKS_X):
         for cz in range(WORLD_CHUNKS_Z):
             sections = []
             for sy in range(MIN_SECTION_Y, MAX_SECTION_Y + 1):
-                base = sy * 16
-                if 0 <= base and base + 16 <= INTERNAL_HEIGHT:
-                    block_slice = java_names[
+                world_y_base = sy * 16
+                mcpi_y_base = world_y_base - Y_SHIFT
+                if 0 <= mcpi_y_base and mcpi_y_base + 16 <= INTERNAL_HEIGHT:
+                    block_slice = states[
                         cx * 16 : (cx + 1) * 16,
-                        base : base + 16,
+                        mcpi_y_base : mcpi_y_base + 16,
                         cz * 16 : (cz + 1) * 16,
                     ]
                 else:
-                    block_slice = np.full((16, 16, 16), "air", dtype=object)
+                    block_slice = empty_section
                 sections.append(build_section(sy, block_slice))
+
             chunks[(cx, cz)] = build_chunk_nbt(
                 cx, cz,
                 sections=sections,
@@ -139,8 +189,14 @@ def convert(
     write_empty_region(region_root / "entities" / "r.0.0.mca")
     write_empty_region(region_root / "poi" / "r.0.0.mca")
 
-    log.info("patching level.dat")
+    log.info("patching level.dat: name=%r spawn=%r", level_name, spawn)
     _patch_level_dat(out_dir / "level.dat", level_name, spawn)
+
+    if void_surroundings:
+        log.info("installing void world generator")
+        seed = mcpi_meta.get("RandomSeed") or 0
+        install_void_worldgen(out_dir, seed=int(seed))
+
     (out_dir / "session.lock").write_bytes(b"\xe2\x98\x83")
 
     log.info("done: %s", out_dir)
