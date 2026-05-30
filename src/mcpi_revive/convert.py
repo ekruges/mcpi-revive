@@ -73,6 +73,34 @@ def _decode_states(blocks: np.ndarray, data: np.ndarray) -> np.ndarray:
 
 _DOOR_NAMES = frozenset({"oak_door", "iron_door"})
 
+# Blocks whose connection state must be set explicitly in modern Java.
+_FENCE_NAMES = frozenset({"oak_fence", "nether_brick_fence"})
+_PANE_NAMES = frozenset({"glass_pane", "iron_bars"})
+
+# Things fences/panes definitely don't connect to. Everything else is
+# treated as solid (over-connection is a less ugly failure mode than
+# under-connection).
+_NEVER_CONNECT = frozenset({
+    "air",
+    "water", "lava",
+    "torch", "wall_torch", "redstone_torch", "redstone_wall_torch",
+    "dandelion", "poppy", "brown_mushroom", "red_mushroom",
+    "oak_sapling", "spruce_sapling", "birch_sapling", "jungle_sapling",
+    "grass", "dead_bush", "lily_pad",
+    "wheat", "sugar_cane", "cactus",
+    "snow",
+    "redstone_wire",
+    "ladder",
+    "rail", "powered_rail", "detector_rail",
+    "fire",
+    "oak_door", "iron_door",
+    "red_bed",
+    "oak_trapdoor",
+    "stonecutter",
+    "fire",
+    "magenta_wool",  # our "unknown" placeholder — be safe
+})
+
 
 def _stitch_doors(states: np.ndarray) -> None:
     """MCPI splits door state across two halves (facing+open on the lower,
@@ -106,6 +134,43 @@ def _stitch_doors(states: np.ndarray) -> None:
                     "half": "upper", "facing": facing, "open": is_open,
                     "hinge": hinge, "powered": "false",
                 })
+
+
+def _stitch_connections(states: np.ndarray, blocks: np.ndarray) -> None:
+    """Set north/south/east/west on fences, glass panes, iron bars.
+
+    Modern Java stores these as block state and won't recompute them at
+    render time — without this pass, every fence and glass pane renders
+    as an unconnected post.
+
+    Uses raw MCPI block ids to locate targets fast, then operates on the
+    decoded state array.
+    """
+    fence_mask = np.isin(blocks, [85, 113])
+    pane_mask = np.isin(blocks, [101, 102])
+    targets = np.argwhere(fence_mask | pane_mask)
+    sx, sy, sz = states.shape
+
+    def name_at(x: int, y: int, z: int) -> str:
+        if 0 <= x < sx and 0 <= y < sy and 0 <= z < sz:
+            s = states[x, y, z]
+            if isinstance(s, tuple):
+                return s[0]
+        return "air"
+
+    dirs = [(-1, 0, "west"), (1, 0, "east"), (0, -1, "north"), (0, 1, "south")]
+
+    for x, y, z in targets:
+        state = states[x, y, z]
+        if not isinstance(state, tuple):
+            continue
+        name, props = state
+        new_props = dict(props)
+        for dx, dz, dname in dirs:
+            n = name_at(x + dx, y, z + dz)
+            new_props[dname] = "false" if n in _NEVER_CONNECT else "true"
+        new_props.setdefault("waterlogged", "false")
+        states[x, y, z] = (name, new_props)
 
 
 def _compute_highest_solid(blocks: np.ndarray) -> np.ndarray:
@@ -199,6 +264,7 @@ def convert(
     log.info("decoding block states")
     states = _decode_states(blocks, metadata)
     _stitch_doors(states)
+    _stitch_connections(states, blocks)
     highest = _compute_highest_solid(blocks)
 
     # Per (cx, cz, section_idx) list of encoded local positions
