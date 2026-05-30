@@ -4,20 +4,43 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcpi-revive"
-version = "0.2.0"
-description = "Convert Minecraft: Pi Edition worlds to modern Java Anvil format."
+version = "0.3.0"
+description = "Convert Minecraft: Pi Edition worlds (chunks.dat) to modern Minecraft Java (Anvil region files). Deterministic output, preserves block state from the data nibble, voids surroundings."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
-authors = [{name = "mcpi-revive contributors"}]
-keywords = ["minecraft", "minecraft-pi", "mcpi", "anvil", "world-converter"]
+authors = [{name = "ekruges"}]
+keywords = [
+    "minecraft",
+    "minecraft-pi",
+    "minecraft-pi-edition",
+    "mcpi",
+    "raspberry-pi",
+    "pocket-edition",
+    "anvil",
+    "chunks.dat",
+    "nbt",
+    "world-converter",
+    "save-converter",
+    "save-recovery",
+    "legacy-minecraft",
+    "minecraft-java",
+    "data-recovery",
+]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Games/Entertainment",
+    "Topic :: System :: Archiving :: Backup",
+    "Topic :: System :: Recovery Tools",
     "Topic :: Utilities",
 ]
 dependencies = [
@@ -33,6 +56,7 @@ mcpi-revive = "mcpi_revive.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/ekruges/mcpi-revive"
+Repository = "https://github.com/ekruges/mcpi-revive"
 Issues = "https://github.com/ekruges/mcpi-revive/issues"
 
 [tool.setuptools.packages.find]

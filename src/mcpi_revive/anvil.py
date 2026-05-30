@@ -4,7 +4,6 @@ from __future__ import annotations
 import io
 import math
 import struct
-import time
 import zlib
 from pathlib import Path
 from typing import Dict, Mapping, Sequence, Tuple
@@ -176,11 +175,14 @@ def write_region(path: Path, chunks: Mapping[Tuple[int, int], nbt.NBTFile]) -> N
         compressed[key] = zlib.compress(buf.getvalue(), level=6)
 
     locations = [0] * 1024
-    timestamps = [int(time.time())] * 1024
+    timestamps = [0] * 1024  # deterministic — same input -> same output bytes
     sector_data: list[bytes] = []
     current_sector = 2
 
-    for (cx, cz), comp in compressed.items():
+    # Iterate in chunk-coord order so output is fully deterministic
+    for key in sorted(compressed.keys()):
+        cx, cz = key
+        comp = compressed[key]
         length_field = len(comp) + 1
         chunk_bytes = struct.pack(">IB", length_field, 2) + comp
         sectors = (len(chunk_bytes) + SECTOR_SIZE - 1) // SECTOR_SIZE

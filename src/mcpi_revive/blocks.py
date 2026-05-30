@@ -135,6 +135,44 @@ def _lava(d: int) -> State:
     return ("lava", {"level": str(d & 0x0F)})
 
 
+def _wheat(d: int) -> State:
+    return ("wheat", {"age": str(d & 0x07)})
+
+
+def _pumpkin(name: str):
+    def decode(d: int) -> State:
+        facing = {0: "south", 1: "west", 2: "north", 3: "east"}.get(d & 0x03, "north")
+        return (name, {"facing": facing})
+    return decode
+
+
+def _cake(d: int) -> State:
+    return ("cake", {"bites": str(d & 0x07)})
+
+
+def _sugar_cane(d: int) -> State:
+    return ("sugar_cane", {"age": str(d & 0x0F)})
+
+
+def _cactus_age(d: int) -> State:
+    return ("cactus", {"age": str(d & 0x0F)})
+
+
+def _snow_layer(d: int) -> State:
+    layers = min(8, max(1, (d & 0x07) + 1))
+    return ("snow", {"layers": str(layers)})
+
+
+def _redstone_torch(lit: bool):
+    def decode(d: int) -> State:
+        m = d & 0x07
+        if m == 5 or m == 0:
+            return ("redstone_torch", {"lit": str(lit).lower()})
+        facing = {1: "east", 2: "west", 3: "south", 4: "north"}.get(m, "north")
+        return ("redstone_wall_torch", {"facing": facing, "lit": str(lit).lower()})
+    return decode
+
+
 # Plain blocks (no data-dependent state)
 PLAIN: Dict[int, str] = {
     0:   "air",
@@ -149,10 +187,21 @@ PLAIN: Dict[int, str] = {
     14:  "gold_ore",
     15:  "iron_ore",
     16:  "coal_ore",
+    19:  "sponge",
     20:  "glass",
     21:  "lapis_ore",
     22:  "lapis_block",
     24:  "sandstone",
+    25:  "note_block",
+    27:  "powered_rail",
+    28:  "detector_rail",
+    30:  "cobweb",
+    31:  "grass",                  # tall grass
+    32:  "dead_bush",
+    37:  "dandelion",
+    38:  "poppy",
+    39:  "brown_mushroom",
+    40:  "red_mushroom",
     41:  "gold_block",
     42:  "iron_block",
     45:  "bricks",
@@ -160,17 +209,40 @@ PLAIN: Dict[int, str] = {
     47:  "bookshelf",
     48:  "mossy_cobblestone",
     49:  "obsidian",
+    51:  "fire",
+    52:  "spawner",
+    55:  "redstone_wire",
     56:  "diamond_ore",
     57:  "diamond_block",
     58:  "crafting_table",
     60:  "farmland",
+    66:  "rail",
+    70:  "stone_pressure_plate",
+    72:  "oak_pressure_plate",
     73:  "redstone_ore",
-    81:  "cactus",
+    74:  "redstone_ore",           # lit redstone ore
+    77:  "stone_button",
+    79:  "ice",
+    80:  "snow_block",
     82:  "clay",
+    84:  "jukebox",
     85:  "oak_fence",
+    87:  "netherrack",
+    88:  "soul_sand",
+    89:  "glowstone",
     95:  "barrier",                # PE invisible bedrock
+    97:  "infested_stone",
     98:  "stone_bricks",
+    100: "red_mushroom_block",
+    101: "iron_bars",
     102: "glass_pane",
+    103: "melon",
+    107: "oak_fence_gate",
+    110: "mycelium",
+    111: "lily_pad",
+    112: "nether_bricks",
+    113: "nether_brick_fence",
+    121: "end_stone",
     245: "stonecutter",            # MCPI legacy stonecutter
     246: "magma_block",            # glowing obsidian
     247: "obsidian",               # nether reactor core
@@ -192,11 +264,21 @@ DECODERS = {
     50:  _torch,
     53:  _stairs("oak_stairs"),
     54:  _chest,
+    59:  _wheat,
     61:  _furnace(False),
     62:  _furnace(True),
     64:  _door("oak_door"),
     65:  _ladder,
     67:  _stairs("cobblestone_stairs"),
+    71:  _door("iron_door"),
+    75:  _redstone_torch(False),
+    76:  _redstone_torch(True),
+    78:  _snow_layer,
+    81:  _cactus_age,
+    83:  _sugar_cane,
+    86:  _pumpkin("pumpkin"),
+    91:  _pumpkin("jack_o_lantern"),
+    92:  _cake,
     96:  _trapdoor,
     109: _stairs("stone_brick_stairs"),
     155: _quartz,
