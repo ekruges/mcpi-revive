@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcpi-revive"
-version = "0.3.3"
+version = "0.3.4"
 description = "Convert Minecraft: Pi Edition worlds (chunks.dat) to modern Minecraft Java (Anvil region files). Deterministic output, preserves block state from the data nibble, voids surroundings."
 readme = "README.md"
 license = {text = "MIT"}

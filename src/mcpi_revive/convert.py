@@ -71,6 +71,43 @@ def _decode_states(blocks: np.ndarray, data: np.ndarray) -> np.ndarray:
     return out.reshape(blocks.shape)
 
 
+_DOOR_NAMES = frozenset({"oak_door", "iron_door"})
+
+
+def _stitch_doors(states: np.ndarray) -> None:
+    """MCPI splits door state across two halves (facing+open on the lower,
+    hinge on the upper). Modern Java MC requires both halves to share every
+    property — un-stitched doors render with mismatched halves ("broken door").
+
+    Walks every (x, z) column and merges adjacent door halves in place.
+    """
+    sx, sy, sz = states.shape
+    for x in range(sx):
+        for z in range(sz):
+            for y in range(sy - 1):
+                lower = states[x, y, z]
+                upper = states[x, y + 1, z]
+                if not isinstance(lower, tuple) or not isinstance(upper, tuple):
+                    continue
+                lname, lprops = lower
+                uname, uprops = upper
+                if lname not in _DOOR_NAMES or uname not in _DOOR_NAMES or lname != uname:
+                    continue
+                if lprops.get("half") != "lower" or uprops.get("half") != "upper":
+                    continue
+                facing = lprops.get("facing", "north")
+                is_open = lprops.get("open", "false")
+                hinge = uprops.get("hinge", "left")
+                states[x, y, z] = (lname, {
+                    "half": "lower", "facing": facing, "open": is_open,
+                    "hinge": hinge, "powered": "false",
+                })
+                states[x, y + 1, z] = (uname, {
+                    "half": "upper", "facing": facing, "open": is_open,
+                    "hinge": hinge, "powered": "false",
+                })
+
+
 def _compute_highest_solid(blocks: np.ndarray) -> np.ndarray:
     nonair = blocks != 0
     flipped = nonair[:, ::-1, :]
@@ -161,6 +198,7 @@ def convert(
 
     log.info("decoding block states")
     states = _decode_states(blocks, metadata)
+    _stitch_doors(states)
     highest = _compute_highest_solid(blocks)
 
     # Per (cx, cz, section_idx) list of encoded local positions
