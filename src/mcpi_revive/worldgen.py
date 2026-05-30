@@ -107,9 +107,11 @@ def install_void_worldgen(world_dir: Path, seed: int = 0) -> None:
     data.tags.append(build_world_gen_settings(seed))
     f.write_file(str(level_path))
 
-    # 2. Standalone file for 26.1+
+    # 2. Standalone file for 26.1+. Root compound IS the WGS — children
+    #    seed/generate_features/bonus_chest/dimensions go in directly.
     wgs_dir = world_dir / "data" / "minecraft"
     wgs_dir.mkdir(parents=True, exist_ok=True)
     standalone = nbt.NBTFile()
-    standalone.tags.append(build_world_gen_settings(seed))
+    for child in build_world_gen_settings(seed).tags:
+        standalone.tags.append(child)
     standalone.write_file(str(wgs_dir / "world_gen_settings.dat"))
