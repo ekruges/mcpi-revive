@@ -129,6 +129,7 @@ def build_chunk_nbt(
     min_world_y: int,
     data_version: int = DATA_VERSION_DEFAULT,
     status: str = "minecraft:full",
+    post_processing: Sequence[Sequence[int]] | None = None,
 ) -> nbt.NBTFile:
     root = nbt.NBTFile()
     root.tags.append(_tag(nbt.TAG_Int, "DataVersion", data_version))
@@ -141,9 +142,18 @@ def build_chunk_nbt(
     root.tags.append(_tag(nbt.TAG_Byte, "isLightOn", 0))
     root.tags.append(_build_heightmaps(highest_solid_y, min_world_y))
 
+    # PostProcessing: list-of-24-lists of TAG_Short, encoded
+    # (z << 8) | (y << 4) | x for the block's local position. Caller
+    # provides per-section positions for blocks needing on-load update
+    # (sand, gravel, water, lava, etc.).
     pp = nbt.TAG_List(name="PostProcessing", type=nbt.TAG_List)
-    for _ in range(len(sections)):
-        pp.tags.append(nbt.TAG_List(type=nbt.TAG_Short))
+    for i in range(len(sections)):
+        inner = nbt.TAG_List(type=nbt.TAG_Short)
+        if post_processing is not None and i < len(post_processing):
+            for pos in post_processing[i]:
+                s = nbt.TAG_Short(value=int(pos))
+                inner.tags.append(s)
+        pp.tags.append(inner)
     root.tags.append(pp)
 
     secs = nbt.TAG_List(name="sections", type=nbt.TAG_Compound)

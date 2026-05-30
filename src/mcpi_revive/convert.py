@@ -33,6 +33,16 @@ MIN_SECTION_Y = -4
 MAX_SECTION_Y = 19
 MIN_WORLD_Y = MIN_SECTION_Y * 16  # -64
 
+# MCPI block IDs that need an update tick on load so they fall / flow
+# instead of hanging as "ghost" blocks until poked.
+PHYSICS_IDS = frozenset({
+    8, 9,    # water flowing + still
+    10, 11,  # lava
+    12,      # sand
+    13,      # gravel
+    78,      # snow layer
+})
+
 # Shift the MCPI world down so MCPI y=0 lands at modern y=Y_SHIFT.
 # -64 puts MCPI bedrock at modern bedrock level (the world's floor).
 Y_SHIFT = -64
@@ -153,6 +163,10 @@ def convert(
     states = _decode_states(blocks, metadata)
     highest = _compute_highest_solid(blocks)
 
+    # Per (cx, cz, section_idx) list of encoded local positions
+    # that need on-load update. Built from raw MCPI block ids.
+    physics_mask = np.isin(blocks, list(PHYSICS_IDS))
+
     log.info("building chunks")
     chunks: Dict[Tuple[int, int], nbt.NBTFile] = {}
     air_state = ("air", {})
@@ -161,6 +175,7 @@ def convert(
     for cx in range(WORLD_CHUNKS_X):
         for cz in range(WORLD_CHUNKS_Z):
             sections = []
+            post_processing: list[list[int]] = []
             for sy in range(MIN_SECTION_Y, MAX_SECTION_Y + 1):
                 world_y_base = sy * 16
                 mcpi_y_base = world_y_base - Y_SHIFT
@@ -170,8 +185,21 @@ def convert(
                         mcpi_y_base : mcpi_y_base + 16,
                         cz * 16 : (cz + 1) * 16,
                     ]
+                    phys_slice = physics_mask[
+                        cx * 16 : (cx + 1) * 16,
+                        mcpi_y_base : mcpi_y_base + 16,
+                        cz * 16 : (cz + 1) * 16,
+                    ]
+                    # Find positions of physics blocks. Encode as Short:
+                    # (z << 8) | (y << 4) | x for the local block position.
+                    xs, ys, zs = np.where(phys_slice)
+                    post_processing.append([
+                        int((int(z) << 8) | (int(y) << 4) | int(x))
+                        for x, y, z in zip(xs, ys, zs)
+                    ])
                 else:
                     block_slice = empty_section
+                    post_processing.append([])
                 sections.append(build_section(sy, block_slice))
 
             chunks[(cx, cz)] = build_chunk_nbt(
@@ -181,6 +209,7 @@ def convert(
                 highest_solid_y=highest[cx * 16 : (cx + 1) * 16, cz * 16 : (cz + 1) * 16],
                 min_world_y=MIN_WORLD_Y,
                 data_version=data_version,
+                post_processing=post_processing,
             )
 
     log.info("writing region")
